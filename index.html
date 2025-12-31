@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>会计准则检索</title>
+
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#ffffff">
+
+  <style>
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial;
+      margin:0;padding:14px;background:#fff
+    }
+    h1{font-size:18px;margin:0 0 12px}
+    .row{display:flex;gap:8px}
+    input{
+      flex:1;padding:10px;border:1px solid #ccc;border-radius:10px;
+      font-size:14px
+    }
+    button{
+      padding:10px 12px;border:1px solid #ccc;border-radius:10px;
+      background:#f7f7f7;font-size:14px
+    }
+    .meta{color:#666;font-size:12px;margin:10px 0}
+    .item{padding:10px 0;border-bottom:1px solid #eee}
+    .t{font-size:15px}
+    .s{color:#666;font-size:12px;margin-top:4px}
+    a{color:#0b57d0;text-decoration:none}
+  </style>
+</head>
+
+<body>
+  <h1>会计准则检索</h1>
+
+  <div class="row">
+    <input id="q" placeholder="搜索：准则解释19号 / 企业会计准则 / 租赁 / 收入…" />
+    <button id="btnSearch">搜索</button>
+    <button id="btnSync">更新</button>
+  </div>
+
+  <div class="meta" id="meta">尚未更新索引</div>
+  <div id="list"></div>
+
+<script>
+  // ⚠️ 后面你部署 Cloudflare Worker 后，只需要改这一行
+  const API_BASE = "https://YOUR_WORKER_SUBDOMAIN.workers.dev";
+
+  const STORE_KEY = "kjzz_items_v1";
+  const elQ = document.getElementById("q");
+  const elList = document.getElementById("list");
+  const elMeta = document.getElementById("meta");
+
+  function loadStore(){
+    try { return JSON.parse(localStorage.getItem(STORE_KEY) || "[]"); }
+    catch { return []; }
+  }
+
+  function saveStore(items){
+    localStorage.setItem(STORE_KEY, JSON.stringify(items));
+    elMeta.textContent =
+      `本地索引 ${items.length} 条 · 最近更新 ${new Date().toLocaleString()}`;
+  }
+
+  function render(items){
+    elList.innerHTML = items.map(x => `
+      <div class="item">
+        <div class="t">
+          <a href="${x.url}" target="_blank" rel="noopener">${x.title}</a>
+        </div>
+        <div class="s">${x.source}${x.date ? " · " + x.date : ""}</div>
+      </div>
+    `).join("");
+  }
+
+  function search(q){
+    const items = loadStore();
+    const key = q.trim().toLowerCase();
+    if(!key){
+      render(items.slice(0,80));
+      return;
+    }
+    const hit = items.filter(x =>
+      (x.title||"").toLowerCase().includes(key) ||
+      (x.source||"").toLowerCase().includes(key)
+    ).slice(0,80);
+    render(hit);
+  }
+
+  async function sync(){
+    elMeta.textContent = "正在更新索引…";
+    const urls = [
+      `${API_BASE}/kjs/policy`,
+      `${API_BASE}/kjs/interpret`
+    ];
+    let all = [];
+    for(const u of urls){
+      const r = await fetch(u);
+      if(!r.ok) throw new Error("更新失败");
+      const data = await r.json();
+      all = all.concat(data.items || []);
+    }
+    const map = new Map();
+    for(const it of all) map.set(it.url, it);
+    const items = Array.from(map.values())
+      .sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+    saveStore(items);
+    render(items.slice(0,80));
+  }
+
+  document.getElementById("btnSearch").onclick = () => search(elQ.value);
+  document.getElementById("btnSync").onclick =
+    () => sync().catch(e => elMeta.textContent = String(e));
+  elQ.addEventListener("keydown", e => {
+    if(e.key === "Enter") search(elQ.value);
+  });
+
+  const init = loadStore();
+  if(init.length){
+    elMeta.textContent = `本地索引 ${init.length} 条 · 可点“更新”拉取最新`;
+    render(init.slice(0,80));
+  }
+
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("/sw.js");
+  }
+</script>
+</body>
+</html>
